@@ -65,9 +65,8 @@ Two functional tabs:
 
 ```bash
 git clone https://github.com/your-username/genai-chatbot.git
-cd genai-chatbot
 pip install -r requirements.txt
-python app.py
+python genai.py
 ```
 
 ---
