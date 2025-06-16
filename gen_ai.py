@@ -21,9 +21,12 @@ from langgraph.graph import add_messages, StateGraph, END
 from langgraph.prebuilt import ToolNode
 
 from youtube_summarize import download_youtube_audio, transcribe_audio, create_vector_db, get_summary
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # ------------------- Pinecone Setup ------------------------
-PINECONE_API_KEY = "pcsk_7TRhmd_3ouyJqdoAGRKaNdXt2ed1GjvHoLk2ndz5K4qQmwFdRazsGr14wRJGNhPoJEwD8x"
+PINECONE_API_KEY = os.environ.get("PINECONE_API_KEY")
 pc = Pinecone(api_key=PINECONE_API_KEY)
 index_name = "chat-history"
 

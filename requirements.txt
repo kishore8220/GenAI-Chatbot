@@ -1,0 +1,31 @@
+# Core libraries
+python-dotenv
+requests
+beautifulsoup4
+textwrap3  # safer than using built-in for some platforms
+
+# Date/time zone
+tzdata  # For zoneinfo compatibility on some systems
+
+# YouTube + Whisper
+whisper
+yt-dlp  # for downloading YouTube audio
+ffmpeg-python  # needed by whisper
+
+# Vector DB and embeddings
+pinecone-client
+faiss-cpu
+sentence-transformers
+langchain
+langchain-community
+langchain-ollama
+langchain-groq
+
+# Frontend
+gradio
+
+# Optional dependencies for LangGraph
+langgraph
+
+# Others
+tavily-python  # For TavilySearchResults tool
