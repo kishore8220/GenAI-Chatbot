@@ -1,4 +1,4 @@
-# 🔗 Tool-Enhanced LLM Chatbot & 📄 README Generator
+# 🔗 GENAI Chatbot & 📄 README Generator
 
 This project combines the power of a **LangGraph-based conversational AI** with tool-augmented capabilities such as YouTube summarization, web article summarization, date/time reporting, and web search. It also includes a utility to **auto-generate professional `README.md` files** from uploaded Python source code.
 
@@ -6,7 +6,7 @@ This project combines the power of a **LangGraph-based conversational AI** with 
 
 ## 🌟 Features
 
-### 💬 Tool-Enhanced Chatbot
+### 💬 GenAI-Chatbot
 - Powered by `LangGraph`, `LangChain`, and `Ollama` (LLM model: `qwen3`)
 - Integrates useful tools:
   - ⏰ **Date/Time Tool** – Returns IST time
