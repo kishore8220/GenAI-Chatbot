@@ -219,17 +219,40 @@ chat_ui = gr.ChatInterface(
     description="Chat with a tool-enhanced LLM agent.",
 )
 
-readme_tab = gr.Interface(
-    fn=generate_readme_from_code,
-    inputs=gr.File(label="📎 Upload a Python (.py) file", file_types=[".py"]),
-    outputs=[
-        gr.Code(label="📄 Uploaded Python Code", language="python"),
-        gr.Markdown(label="📘 Generated README.md"),
-        gr.File(label="📥 Download README.md")
-    ],
-    title="📄 README Generator",
-    description="Upload a `.py` file to generate a professional README.md"
-)
+with gr.Blocks() as readme_tab:
+    gr.Markdown("## 📄 README Generator\nUpload a `.py` file to generate a professional `README.md`.")
+
+    with gr.Row():
+        file_input = gr.File(label="📎 Upload a Python (.py) file", file_types=[".py"])
+        generate_button = gr.Button("⚙️ Generate README")
+
+    readme_output = gr.Markdown(label="📘 Generated README.md", visible=False)
+
+    download_button = gr.Button("📥 Download README.md", visible=False)
+    file_download = gr.File(label="Click to Download", visible=False)
+
+    def handle_generate(file):
+        _, readme, path = generate_readme_from_code(file)
+        if path:
+            return gr.update(value=readme, visible=True), gr.update(visible=True), gr.update(value=path, visible=False)
+        return gr.update(value="[ERROR] Couldn't generate README.", visible=True), gr.update(visible=False), gr.update(visible=False)
+
+    generate_button.click(
+        fn=handle_generate,
+        inputs=file_input,
+        outputs=[readme_output, download_button, file_download]
+    )
+
+    download_button.click(
+        fn=lambda path: path,
+        inputs=file_download,
+        outputs=file_download
+    ).then(
+        fn=lambda: gr.update(visible=True),
+        inputs=None,
+        outputs=file_download
+    )
+
 
 demo = gr.TabbedInterface(
     interface_list=[chat_ui, readme_tab],
