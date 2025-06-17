@@ -1,33 +1,31 @@
 import os
-import tempfile
-import textwrap
 import uuid
 import re
+import gradio as gr
+from dotenv import load_dotenv
 from datetime import datetime
 from zoneinfo import ZoneInfo
-from typing import TypedDict, Annotated
-
-import requests
-from bs4 import BeautifulSoup
-from sentence_transformers import SentenceTransformer
-from pinecone import Pinecone, ServerlessSpec
+from youtube_summarize import download_youtube_audio, transcribe_audio, create_vector_db, get_summary
 
 from langchain_ollama import ChatOllama
 from langchain.agents import Tool
-from langchain.memory import ConversationBufferMemory
 from langchain_community.tools.tavily_search import TavilySearchResults
+from langchain.memory import ConversationBufferMemory
 from langchain.prompts import PromptTemplate
 from langgraph.graph import add_messages, StateGraph, END
 from langgraph.prebuilt import ToolNode
 
-from youtube_summarize import download_youtube_audio, transcribe_audio, create_vector_db, get_summary
-from dotenv import load_dotenv
+from bs4 import BeautifulSoup
+import requests
+import textwrap
+import tempfile
+from sentence_transformers import SentenceTransformer
+from pinecone import Pinecone, ServerlessSpec
 
 load_dotenv()
 
 # ------------------- Pinecone Setup ------------------------
-PINECONE_API_KEY = os.environ.get("PINECONE_API_KEY")
-pc = Pinecone(api_key=PINECONE_API_KEY)
+pc = Pinecone(api_key=os.getenv("PINECONE_API_KEY"))
 index_name = "chat-history"
 
 if index_name not in pc.list_indexes().names():
@@ -41,7 +39,6 @@ if index_name not in pc.list_indexes().names():
 index = pc.Index(index_name)
 embedder = SentenceTransformer("all-MiniLM-L6-v2")
 
-# ------------------- Memory Save & Fetch ------------------------
 def save_to_pinecone(user_msg, bot_response, thread_id="default_thread"):
     combined_text = f"User: {user_msg}\nBot: {bot_response}"
     embedding = embedder.encode(combined_text).tolist()
@@ -60,17 +57,13 @@ def save_to_pinecone(user_msg, bot_response, thread_id="default_thread"):
     ])
 
 def fetch_context_from_pinecone(thread_id: str, top_k: int = 5) -> list:
-    # Embed any dummy text to get a valid query vector (required by Pinecone)
     query_vector = embedder.encode("dummy query").tolist()
-    
     results = index.query(
         vector=query_vector,
-        top_k=50,  # large enough to fetch full history
+        top_k=50,
         filter={"thread_id": {"$eq": thread_id}},
         include_metadata=True
     )
-
-    # Sort by timestamp
     sorted_matches = sorted(
         results.matches,
         key=lambda x: x.metadata["timestamp"]
@@ -84,23 +77,13 @@ def fetch_context_from_pinecone(thread_id: str, top_k: int = 5) -> list:
 
     return messages
 
+class BasicChatbot(dict):
+    messages: list
 
-# ------------------- Chat State ------------------------
-class BasicChatbot(TypedDict):
-    messages: Annotated[list, add_messages]
-
-# ------------------- Tool: Get System Date & Time --------------------
 def get_system_date_and_time(_input: str) -> str:
     now = datetime.now(ZoneInfo("Asia/Kolkata"))
     return f"🕒 Current Date & Time (IST): {now.strftime('%Y-%m-%d %I:%M:%S %p')}"
 
-date_time_tool = Tool.from_function(
-    name="get_system_date_and_time",
-    description="Returns the current system date and time in IST",
-    func=get_system_date_and_time
-)
-
-# ------------------- Tool: YouTube Summarizer ------------------------
 def youtube_summarizer_tool(url: str) -> str:
     try:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -112,13 +95,6 @@ def youtube_summarizer_tool(url: str) -> str:
     except Exception as e:
         return f"[ERROR] {e}"
 
-youtube_tool = Tool.from_function(
-    name="summarize_youtube_video",
-    description="Summarizes a YouTube video from its URL using Whisper and LLM. Input must be a YouTube URL.",
-    func=youtube_summarizer_tool
-)
-
-# ------------------- Tool: Webpage Summarizer ------------------------
 def summarize_web_url(url: str) -> str:
     try:
         response = requests.get(url, timeout=10)
@@ -134,22 +110,28 @@ def summarize_web_url(url: str) -> str:
     except Exception as e:
         return f"[ERROR while summarizing URL] {e}"
 
+date_time_tool = Tool.from_function(
+    name="get_system_date_and_time",
+    description="Returns the current system date and time in IST",
+    func=get_system_date_and_time
+)
+youtube_tool = Tool.from_function(
+    name="summarize_youtube_video",
+    description="Summarizes a YouTube video from its URL using Whisper and LLM. Input must be a YouTube URL.",
+    func=youtube_summarizer_tool
+)
 summarize_web_tool = Tool.from_function(
     name="summarize_web_url",
     description="Summarizes content of any given webpage URL (HTML articles, docs, blogs). Input must be a valid URL.",
     func=summarize_web_url
 )
-
-# ------------------- Tool: Tavily Search -----------------------------
 tavily_api_key = os.environ.get("TAVILY_API_KEY")
 tavily_tool = TavilySearchResults(api_key=tavily_api_key)
 
-# ------------------- LLM + Tools Setup ------------------------
 llm = ChatOllama(model="qwen3")
 tools = [date_time_tool, tavily_tool, youtube_tool, summarize_web_tool]
 llm_tools = llm.bind_tools(tools)
 
-# ------------------- LangGraph Nodes ------------------------
 def chatbot(state: BasicChatbot):
     response = llm_tools.invoke(state["messages"])
     state["messages"].append(response)
@@ -172,37 +154,87 @@ graph.add_conditional_edges("chatbot", tool_router)
 graph.add_edge("tool_node", "chatbot")
 app = graph.compile()
 
-# ------------------- CLI Chat Interface ------------------------
-def chat_with_bot(message: str, thread_id: str = "default_thread", is_custom_thread: bool = True):
-    if message.strip().lower() == "!clear":
-        return "✅ Chat history clearing not yet implemented."
-
+def gr_chat(message, history, thread_id):
     past_messages = fetch_context_from_pinecone(thread_id)
-    print("Thread_id:", thread_id)
     past_messages.append({"role": "user", "content": message})
     state = {"messages": past_messages}
-
+    
     result = app.invoke(state)
     response_msg = result["messages"][-1]
     clean_content = re.sub(r"<think>.*?</think>", "", response_msg.content, flags=re.DOTALL).strip()
+    
+    save_to_pinecone(message, clean_content, thread_id)
 
-    # Only save to Pinecone if not default (i.e. custom or UUID session)
-    if is_custom_thread or thread_id != "default_thread":
-        save_to_pinecone(message, clean_content, thread_id)
-
+    # ✅ Only return the assistant response
     return clean_content
 
+# ------------------- README Generator Chain ---------------------------
+def generate_readme_from_code(file):
+    try:
+        if not file.name.endswith(".py"):
+            return "[ERROR] Only .py files are supported.", "", None
 
-# ------------------- Entry Point ------------------------
+        with open(file.name, "r", encoding="utf-8") as f:
+            code = f.read()
+
+        prompt_template = PromptTemplate(
+            input_variables=["code"],
+            template="""You are a helpful assistant. Read the following Python code and generate a professional, clean, and informative README.md content for it.
+
+Python Code:
+{code}
+
+README:
+""")
+        chain = prompt_template | llm
+        readme = chain.invoke({"code": code})
+
+        if hasattr(readme, "content"):
+            readme = readme.content
+
+        # Save to temp .md file
+        readme_file = tempfile.NamedTemporaryFile(delete=False, suffix=".md", mode='w', encoding='utf-8')
+        readme_file.write(readme)
+        readme_file.close()
+
+        return code, readme, readme_file.name
+
+    except Exception as e:
+        return f"[ERROR] {str(e)}", "", None
+
+
+
+
+
+def new_session():
+    return str(uuid.uuid4())
+
+
+chat_ui = gr.ChatInterface(
+    fn=gr_chat,
+    additional_inputs=[
+        gr.Textbox(value=new_session, label="Thread ID")
+    ],
+    title="🔗 Tool-Enabled Chatbot",
+    description="Chat with a tool-enhanced LLM agent.",
+)
+
+readme_tab = gr.Interface(
+    fn=generate_readme_from_code,
+    inputs=gr.File(label="📎 Upload a Python (.py) file", file_types=[".py"]),
+    outputs=[
+        gr.Code(label="📄 Uploaded Python Code", language="python"),
+        gr.Markdown(label="📘 Generated README.md"),
+        gr.File(label="📥 Download README.md")
+    ],
+    title="📄 README Generator",
+    description="Upload a `.py` file to generate a professional README.md"
+)
+
+demo = gr.TabbedInterface(
+    interface_list=[chat_ui, readme_tab],
+    tab_names=["💬 Chatbot", "📄 README Generator"]
+)
+
 if __name__ == "__main__":
-    user_input_thread = input("Enter thread ID (or press Enter for a new session): ").strip()
-    thread_id = user_input_thread if user_input_thread else str(uuid.uuid4())
-    is_custom_thread = bool(user_input_thread)  # To check later if user supplied a custom ID
-    while True:
-        user_input = input("👤 You: ")
-        if user_input.strip().lower() == "exit":
-            print("👋 Exiting chatbot.")
-            break
-        print("🤖 Bot:", chat_with_bot(user_input, thread_id, is_custom_thread))
-
-
+    demo.launch()
